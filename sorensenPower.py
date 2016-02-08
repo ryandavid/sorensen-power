@@ -83,6 +83,18 @@ class sorensenPower:
 
 		return self.serialNumber
 
+	def getMaxVoltage( self, forceUpdate=False ):
+		if( (self.maxVoltage == None) | forceUpdate ):
+			self.getStatus()
+
+		return self.maxVoltage
+
+	def getMaxCurrent( self, forceUpdate=False ):
+		if( (self.maxCurrent == None) | forceUpdate ):
+			self.getStatus()
+
+		return self.maxCurrent
+
 	def writeCommand( self, command ):
 		success = False
 
@@ -130,10 +142,22 @@ class sorensenPower:
 		return current
 
 	def setOutputVoltage( self, voltage ):
-		self.writeCommand( self.COMMAND_SET_VOLTAGE + str(voltage) )
+		success = False
+
+		if( (voltage >= 0) & (voltage <= self.maxVoltage) ):
+			self.writeCommand( self.COMMAND_SET_VOLTAGE + str(voltage) )
+			success = True
+
+		return success
 
 	def setOutputCurrent( self, current ):
-		self.writeCommand( self.COMMAND_SET_CURRENT + str(current) )
+		success = False
+
+		if( (current >= 0) & (current <= self.maxCurrent) ):
+			self.writeCommand( self.COMMAND_SET_CURRENT + str(current) )
+			success = True
+
+		return success
 
 	def getStatus( self ):
 		status = None
