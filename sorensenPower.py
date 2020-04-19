@@ -1,211 +1,200 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 
 import serial
-import time
-import struct
 
 # Assumes the following settings for the DCS M9 RS-232 Interface
 # Baud-rate = 19200
 # Hardware Flow Control = None
 
-class sorensenPower:
+class sorensenPower(object):
+    DEFAULT_TIMEOUT = 0.125
 
-	DEFAULT_READ_SIZE = 200
-	DEFAULT_SLEEP_TIME = 0.000
-	DEFAULT_TIMEOUT = 0.075
+    # List of commands
+    COMMAND_IDN                     = "*IDN?\r"
 
-	# List of commands
-	COMMAND_IDN 					= '*IDN?'
+    COMMAND_MEASURE_CURRENT         = ":MEAS:CURR?\r"
+    COMMAND_MEASURE_VOLTAGE         = ":MEAS:VOLT?\r"
+    COMMAND_SET_VOLTAGE             = ":SOUR:VOLT {:1.03f}\r"
+    COMMAND_SET_VOLTAGE_RAMP        = ":SOUR:VOLT:RAMP {:1.03f} {:1.01f}\r"
+    COMMAND_SET_CURRENT             = ":SOUR:CURR {:1.03f}\r"
+    COMMAND_GET_STATUS              = ":SOUR:STAT:BLOC?\r"
+    COMMAND_RETURN_LOCAL            = ":SYST:LOCAL ON\r"
 
-	COMMAND_MEASURE_CURRENT			= ':MEAS:CURR?'
-	COMMAND_MEASURE_VOLTAGE 		= ':MEAS:VOLT?'
+    def __init__(self, portName="/dev/ttyUSB0", baudrate=19200, debug=False):
+        self.portName = portName
+        self.baudrate = baudrate
 
-	COMMAND_SET_VOLTAGE 			= ':SOUR:VOLT '
+        self.port = serial.Serial()
+        self.port.baudrate = self.baudrate
+        self.port.port = self.portName
+        self.port.timeout = self.DEFAULT_TIMEOUT
+        self.port.rts = True
+        self.port.dtr = True
 
-	COMMAND_SET_CURRENT 			= ':SOUR:CURR '
+        self.debug = debug
 
-	COMMAND_GET_STATUS 				= ':SOUR:STAT:BLOC?'
+        self.model = None
+        self.serialNumber = None
+        self.maxVoltage = None
+        self.maxCurrent = None
 
-	COMMAND_RETURN_LOCAL			= ':SYST:LOCAL ON'
+        self.connect()
 
-	def __init__( self, portName='/dev/ttyUSB0', baudrate=19200 ):
-		self.portName = portName
-		self.baudrate = baudrate
+    def __del__(self):
+        # Make sure we return control to local.
+        self.disconnect()
 
-		self.port = serial.Serial() # self.portName, baudrate, timeout=0, dsrdtr=True)
-		self.port.baudrate = self.baudrate
-		#self.port.dsrdtr=True;
-		self.port.port = self.portName
-		self.port.timeout = self.DEFAULT_TIMEOUT
-		self.port.rts = True
-		self.port.dtr = True
+    def _writeCommand(self, command):
+        result = None
 
-		self.model = None
-		self.serialNumber = None
-		self.maxVoltage = None
-		self.maxCurrent = None
+        if (self.port.isOpen()):
+            if (self.debug is True):
+                print(command.encode())
 
-		self.connect()
+            self.port.write(command.encode())
+            result = self.port.readline().decode(encoding='UTF-8')
 
-	def connect( self ):
-		success = False
+            if (self.debug is True):
+                print("> " + result)
 
-		if( self.port.isOpen() == False ):
-			self.port.open()
+        return result
 
-		self.getStatus()
+    def connect(self):
+        success = False
 
-		success = self.port.isOpen()
+        if (self.port.isOpen() == False):
+            self.port.open()
 
-		return success
+        self.getStatus()
 
-	def disconnect( self, returnToLocal=True ):
-		if( returnToLocal == True ):
-			self.writeCommand( self.COMMAND_RETURN_LOCAL )
+        success = self.port.isOpen()
 
-		success = False
+        return success
 
-		if( self.port.isOpen() == True ):
-			self.port.close()
-			success = True
+    def disconnect(self, returnToLocal=True):
+        if (returnToLocal == True):
+            self._writeCommand(self.COMMAND_RETURN_LOCAL)
 
-		return success
+        success = False
 
-	def getModel( self, forceUpdate=False ):
-		if( (self.model == None) | forceUpdate ):
-			self.getStatus()
+        if (self.port.isOpen() == True):
+            self.port.close()
+            success = True
 
-		return self.model
+        return success
 
-	def getSerialNumber( self, forceUpdate=False ):
-		if( (self.serialNumber == None) | forceUpdate ):
-			self.getStatus()
+    def getModel(self, forceUpdate=False):
+        if ((self.model is None) or forceUpdate):
+            self.getStatus()
 
-		return self.serialNumber
+        return self.model
 
-	def getMaxVoltage( self, forceUpdate=False ):
-		if( (self.maxVoltage == None) | forceUpdate ):
-			self.getStatus()
+    def getSerialNumber(self, forceUpdate=False):
+        if ((self.serialNumber is None) or forceUpdate):
+            self.getStatus()
 
-		return self.maxVoltage
+        return self.serialNumber
 
-	def getMaxCurrent( self, forceUpdate=False ):
-		if( (self.maxCurrent == None) | forceUpdate ):
-			self.getStatus()
+    def getMaxVoltage(self, forceUpdate=False):
+        if ((self.maxVoltage is None) or forceUpdate):
+            self.getStatus()
 
-		return self.maxCurrent
+        return self.maxVoltage
 
-	def writeCommand( self, command ):
-		success = False
+    def getMaxCurrent(self, forceUpdate=False):
+        if ((self.maxCurrent is None) or forceUpdate):
+            self.getStatus()
 
-		if( self.port.isOpen() ):
-			# Automatically wait some time before bombing the instrument
-			time.sleep( self.DEFAULT_SLEEP_TIME )
-			self.port.write( command )
-			self.port.write( '\r' )
+        return self.maxCurrent
 
-			success = True
+    def getIdentification(self):
+        identification = self._writeCommand(self.COMMAND_IDN)
+        return identification.strip()
 
-		return success
+    def getOutputVoltage(self):
+        voltageASCII = self._writeCommand(self.COMMAND_MEASURE_VOLTAGE)
+        voltage = float(voltageASCII.strip())
 
-	def readResult( self, length=None ):
-		data = None
+        return voltage
 
-		if( length == None ):
-			data = self.port.read(self.DEFAULT_READ_SIZE)
-		else:
-			data = self.port.read(length)
+    def getOutputCurrent(self):
+        currentASCII = self._writeCommand(self.COMMAND_MEASURE_CURRENT)
+        current = float(currentASCII.strip())
 
-		return data
+        return current
 
-	def getIdentification( self ):
-		self.writeCommand( self.COMMAND_IDN )
+    def setOutputVoltage(self, voltage):
+        success = False
 
-		identification = self.readResult()
+        if ((voltage >= 0.0) and (voltage <= self.maxVoltage)):
+            self._writeCommand(self.COMMAND_SET_VOLTAGE.format(voltage))
+            success = True
 
-		return identification.strip()
+        return success
 
-	def getOutputVoltage( self ):
-		self.writeCommand( self.COMMAND_MEASURE_VOLTAGE )
+    def setOutputVoltageRamp(self, endVoltage, rampTimeSec):
+        success = False
+        if ((endVoltage >= 0.0) and (endVoltage <= self.maxVoltage) and (rampTimeSec >= 0.0) and (rampTimeSec < 99.0)):
+            self._writeCommand(self.COMMAND_SET_VOLTAGE_RAMP.format(endVoltage, rampTimeSec))
+            success = True
 
-		voltageASCII = self.readResult()
-		voltage = float( voltageASCII.strip() )
+        return success
 
-		return voltage
+    def setOutputCurrent(self, current):
+        success = False
 
-	def getOutputCurrent( self ):
-		self.writeCommand( self.COMMAND_MEASURE_CURRENT )
+        if ((current >= 0) and (current <= self.maxCurrent)):
+            self._writeCommand(self.COMMAND_SET_CURRENT.format(current))
+            success = True
 
-		currentASCII = self.readResult()
-		current = float( currentASCII.strip() )
+        return success
 
-		return current
+    def getStatus(self):
+        status = None
 
-	def setOutputVoltage( self, voltage ):
-		success = False
+        statusASCII = self._writeCommand(self.COMMAND_GET_STATUS).strip().split(',')
 
-		if( (voltage >= 0) & (voltage <= self.maxVoltage) ):
-			self.writeCommand( self.COMMAND_SET_VOLTAGE + str(voltage) )
-			success = True
+        # Doesn't seem to follow the interface spec
+        if (len(statusASCII) == 23):
+            statusRegister = int(statusASCII[3])
+            overTemperature = bool((statusRegister >> 4) & 0x01)
+            overVoltage     = bool((statusRegister >> 3) & 0x01)
+            constantCurrent = bool((statusRegister >> 1) & 0x01)
+            constantVoltage = bool((statusRegister >> 0) & 0x01)
 
-		return success
+            status = {
+                'channelNumber'     : int(statusASCII[0]),
+                'onlineStatus'      : int(statusASCII[1]),
+                'statusFlags'       : int(statusASCII[2]),
+                'statusRegister'    : statusRegister,
+                'accumulatedStatus' : int(statusASCII[4]),
+                'faultMask'         : int(statusASCII[5]),
+                'faultRegister'     : int(statusASCII[6]),
+                'errorRegister'     : int(statusASCII[7]),
+                'overTemperature'   : overTemperature,
+                'overVoltage'       : overVoltage,
+                'constantCurrent'   : constantCurrent,
+                'constantVoltage'   : constantVoltage,
+                'serialNumber'      : statusASCII[8],
+                'voltageCapability' : float(statusASCII[9]),
+                'currentCapability' : float(statusASCII[10]),
+                'overVoltage'       : float(statusASCII[11]),
+                'voltageDacGain'    : float(statusASCII[12]),
+                'voltageDacOffset'  : float(statusASCII[13]),
+                'currentDacGain'    : float(statusASCII[14]),
+                'currentDacOffset'  : float(statusASCII[15]),
+                'protectionDacGain' : float(statusASCII[16]),
+                'protectionDacOffset': float(statusASCII[17]),
+                'voltageAdcGain'    : float(statusASCII[18]),
+                'voltageAdcOffset'  : float(statusASCII[19]),
+                'currentAdcGain'    : float(statusASCII[20]),
+                'currentAcOffset'   : float(statusASCII[21]),
+                'model'             : statusASCII[22]
+            }
 
-	def setOutputCurrent( self, current ):
-		success = False
+            self.model = status['model']
+            self.serialNumber = status['serialNumber']
+            self.maxCurrent = status['currentCapability']
+            self.maxVoltage = status['voltageCapability']
 
-		if( (current >= 0) & (current <= self.maxCurrent) ):
-			self.writeCommand( self.COMMAND_SET_CURRENT + str(current) )
-			success = True
-
-		return success
-
-	def getStatus( self ):
-		status = None
-
-		self.writeCommand( self.COMMAND_GET_STATUS )
-		statusASCII = self.readResult().strip().split(',')
-		
-		# Doesn't seem to follow the interface spec
-		if( len(statusASCII) == 23 ):
-			statusRegister = int( statusASCII[3] )
-			overTemperature = bool((statusRegister >> 4) & 0x01)
-			overVoltage 	= bool((statusRegister >> 3) & 0x01)
-			constantCurrent	= bool((statusRegister >> 1) & 0x01)
-			constantVoltage = bool((statusRegister >> 0) & 0x01)
-
-			status = {
-				'channelNumber'		: int( statusASCII[0] ),
-				'onlineStatus'		: int( statusASCII[1] ),
-				'statusFlags'		: int( statusASCII[2] ),
-				'statusRegister'	: statusRegister,
-				'accumulatedStatus'	: int( statusASCII[4] ),
-				'faultMask'			: int( statusASCII[5] ),
-				'faultRegister'		: int( statusASCII[6] ),
-				'errorRegister'		: int( statusASCII[7] ),
-				'overTemperature'	: overTemperature,
-				'overVoltage'		: overVoltage,
-				'constantCurrent'	: constantCurrent,
-				'constantVoltage'	: constantVoltage,
-				'serialNumber'		: statusASCII[8],
-				'voltageCapability'	: float( statusASCII[9] ),
-				'currentCapability' : float( statusASCII[10] ),
-				'overVoltage'		: float( statusASCII[11] ),
-				'voltageDacGain'	: float( statusASCII[12] ),
-				'voltageDacOffset'	: float( statusASCII[13] ),
-				'currentDacGain'	: float( statusASCII[14] ),
-				'currentDacOffset'	: float( statusASCII[15] ),
-				'protectionDacGain'	: float( statusASCII[16] ),
-				'protectionDacOffset': float( statusASCII[17] ),
-				'voltageAdcGain'	: float( statusASCII[18] ),
-				'voltageAdcOffset'	: float( statusASCII[19] ),
-				'currentAdcGain'	: float( statusASCII[20] ),
-				'currentAcOffset'	: float( statusASCII[21] ),
-				'model'				: statusASCII[22]
-			}
-
-			self.model = status['model']
-			self.serialNumber = status['serialNumber']
-			self.maxCurrent = status['currentCapability']
-			self.maxVoltage = status['voltageCapability']
-
-		return status
+        return status
